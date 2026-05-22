@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prueba AR - 1 Modelo</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { 
+      font-family: Arial; 
+      background: #000;
+      overflow: hidden;
+    }
+    #canvas { 
+      display: block; 
+      width: 100vw; 
+      height: 100vh;
+    }
+    #info {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 14px;
+    }
+    #arButton {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 24px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      z-index: 100;
+      font-weight: bold;
+    }
+    #arButton:hover {
+      background: #0052a3;
+    }
+    #arButton.active {
+      background: #00aa00;
+    }
+    #loader {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.9);
+      padding: 30px;
+      border-radius: 8px;
+      text-align: center;
+      color: white;
+    }
+    .loading-spinner {
+      border: 4px solid #333;
+      border-top: 4px solid #0066cc;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    #error {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: rgba(255,0,0,0.8);
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      max-width: 300px;
+      display: none;
+      z-index: 1000;
+    }
+    #controls {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 13px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas"></div>
+  <button id="arButton">Iniciar AR</button>
+  
+  <div id="info">👆 Toca para colocar el objeto</div>
+  
+  <div id="controls">
+    <div>👆 1 dedo: Rota</div>
+    <div>✌️ 2 dedos: Escala</div>
+  </div>
+  
+  <div id="loader">
+    <div class="loading-spinner"></div>
+    <p>Cargando modelo...</p>
+  </div>
+  
+  <div id="error"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@r128/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script>
+    // ===== CONFIGURACIÓN SIMPLE =====
+    const MODELO_URL = './modelo.glb'; // Asegúrate de que el archivo se llama "modelo.glb"
+
+    let scene, camera, renderer;
+    let modelo = null;
+    let arSession = null;
+    let modeloColocado = false;
+
+    const arButton = document.getElementById('arButton');
+    const info = document.getElementById('info');
+    const controls = document.getElementById('controls');
+    const loader = document.getElementById('loader');
+    const errorDiv = document.getElementById('error');
+
+    // ===== VARIABLES PARA GESTOS =====
+    let touchStart = { x: 0, y: 0, distance: 0 };
+    let isRotating = false;
+
+    // ===== INICIALIZAR THREE.JS =====
+    function inicializar() {
+      const container = document.getElementById('canvas');
+
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      
+      renderer = new THREE.WebGLRenderer({ 
+        antialias: true, 
+        alpha: true,
+        canvas: container,
+        xrCompatible: true 
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      renderer.xr.setReferenceSpaceType('local');
+
+      // Luces
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      directionalLight.position.set(5, 10, 5);
+      scene.add(directionalLight);
+
+      // Cargar modelo
+      const gltfLoader = new THREE.GLTFLoader();
+      gltfLoader.load(MODELO_URL, (gltf) => {
+        modelo = gltf.scene;
+        modelo.scale.set(0.5, 0.5, 0.5);
+        modelo.position.set(0, -0.5, -1);
+        
+        modelo.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        loader.style.display = 'none';
+        console.log('✅ Modelo cargado correctamente');
+      }, 
+      (progress) => {
+        // Mostrar progreso
+        const percent = Math.round((progress.loaded / progress.total) * 100);
+        console.log(`Cargando: ${percent}%`);
+      },
+      (error) => {
+        mostrarError('❌ Error: ' + error.message);
+        console.error('Error completo:', error);
+        loader.style.display = 'none';
+      });
+
+      // Verificar soporte AR
+      if (navigator.xr) {
+        navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+          if (supported) {
+            arButton.style.display = 'block';
+            arButton.addEventListener('click', iniciarAR);
+            console.log('✅ WebXR soportado');
+          } else {
+            mostrarError('❌ AR no soportado en este navegador');
+            console.warn('WebXR no soportado');
+          }
+        }).catch(err => {
+          mostrarError('❌ Error verificando AR: ' + err.message);
+          console.error(err);
+        });
+      } else {
+        mostrarError('❌ WebXR no disponible');
+        console.error('WebXR no está disponible');
+      }
+
+      // Render loop
+      renderer.setAnimationLoop((time, frame) => {
+        if (modelo && !modeloColocado) {
+          modelo.rotation.y += 0.005;
+        }
+        renderer.render(scene, camera);
+      });
+
+      // Listeners para gestos
+      document.addEventListener('touchstart', onTouchStart, false);
+      document.addEventListener('touchmove', onTouchMove, false);
+      document.addEventListener('touchend', onTouchEnd, false);
+
+      console.log('✅ Three.js inicializado');
+    }
+
+    // ===== INICIAR SESIÓN AR =====
+    async function iniciarAR() {
+      try {
+        console.log('📍 Iniciando sesión AR...');
+        
+        const session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['hit-test'],
+          optionalFeatures: ['dom-overlay', 'dom-overlay-for-handheld-ar'],
+          domOverlay: { root: document.body }
+        });
+
+        arSession = session;
+        arButton.classList.add('active');
+        arButton.textContent = '❌ Salir AR';
+        info.textContent = '👆 Toca el suelo para colocar el objeto';
+        info.style.display = 'block';
+        controls.style.display = 'block';
+
+        console.log('✅ Sesión AR iniciada');
+
+        // Event listener para clicks (hit-test)
+        session.addEventListener('select', onARSelect);
+
+        // Cambiar botón a salir
+        arButton.onclick = salirAR;
+
+      } catch (err) {
+        mostrarError('❌ Error AR: ' + err.message);
+        console.error('Error completo:', err);
+      }
+    }
+
+    // ===== HIT-TEST =====
+    async function onARSelect(event) {
+      const session = event.session;
+      const frame = event.frame;
+      const inputSource = event.inputSource;
+
+      try {
+        const hitTestResults = await frame.session.requestHitTestSource({ 
+          space: inputSource.targetRaySpace 
+        });
+
+        if (hitTestResults.length > 0 && modelo && !modeloColocado) {
+          const hit = hitTestResults[0];
+          const pose = hit.getPose(frame.session.inputSpace);
+
+          if (pose) {
+            modelo.position.setFromMatrixPosition(pose.transform.matrix);
+            scene.add(modelo);
+            modeloColocado = true;
+            
+            info.textContent = '✅ Objeto colocado';
+            console.log('✅ Objeto colocado en AR');
+          }
+        }
+      } catch (err) {
+        console.error('Hit test error:', err);
+      }
+    }
+
+    // ===== GESTOS TÁCTILES =====
+    function onTouchStart(event) {
+      if (event.touches.length === 1) {
+        touchStart = {
+          x: event.touches[0].clientX,
+          y: event.touches[0].clientY,
+          distance: 0
+        };
+        isRotating = true;
+      } else if (event.touches.length === 2) {
+        const dx = event.touches[0].clientX - event.touches[1].clientX;
+        const dy = event.touches[0].clientY - event.touches[1].clientY;
+        touchStart.distance = Math.sqrt(dx * dx + dy * dy);
+        isRotating = false;
+      }
+    }
+
+    function onTouchMove(event) {
+      if (!modelo || !modeloColocado) return;
+
+      if (event.touches.length === 1 && isRotating) {
+        // Rotación con 1 dedo
+        const deltaX = event.touches[0].clientX - touchStart.x;
+        const deltaY = event.touches[0].clientY - touchStart.y;
+
+        modelo.rotation.y += deltaX * 0.01;
+        modelo.rotation.x += deltaY * 0.01;
+
+        touchStart.x = event.touches[0].clientX;
+        touchStart.y = event.touches[0].clientY;
+
+      } else if (event.touches.length === 2) {
+        // Escalado con 2 dedos (pellizco)
+        const dx = event.touches[0].clientX - event.touches[1].clientX;
+        const dy = event.touches[0].clientY - event.touches[1].clientY;
+        const newDistance = Math.sqrt(dx * dx + dy * dy);
+
+        if (touchStart.distance > 0) {
+          const scale = newDistance / touchStart.distance;
+          modelo.scale.multiplyScalar(scale);
+          
+          // Limitar escala
+          const currentScale = modelo.scale.x;
+          if (currentScale < 0.2) modelo.scale.set(0.2, 0.2, 0.2);
+          if (currentScale > 3) modelo.scale.set(3, 3, 3);
+        }
+
+        touchStart.distance = newDistance;
+      }
+    }
+
+    function onTouchEnd(event) {
+      isRotating = false;
+      touchStart.distance = 0;
+    }
+
+    // ===== SALIR DE AR =====
+    function salirAR() {
+      if (arSession) {
+        arSession.end();
+        arSession = null;
+        modeloColocado = false;
+        arButton.classList.remove('active');
+        arButton.textContent = 'Iniciar AR';
+        arButton.onclick = iniciarAR;
+        info.textContent = '👆 Toca para colocar el objeto';
+        controls.style.display = 'none';
+        console.log('✅ AR cerrado');
+      }
+    }
+
+    // ===== MOSTRAR ERRORES =====
+    function mostrarError(msg) {
+      errorDiv.textContent = msg;
+      errorDiv.style.display = 'block';
+      console.error(msg);
+    }
+
+    // ===== RESPONSIVE =====
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Inicializar cuando esté listo
+    console.log('🚀 Cargando AR Viewer...');
+    document.addEventListener('DOMContentLoaded', inicializar);
+  </script>
+</body>
+</html>

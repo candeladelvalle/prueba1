@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AR Modelo 3D</title>
 
-  <!-- Carga model-viewer de Google -->
+  <!-- model-viewer de Google -->
   <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
 
   <style>
@@ -22,22 +22,21 @@
       width: 100vw;
       height: 100vh;
       background-color: #1a1a1a;
-      --poster-color: transparent;
     }
 
-    /* Botón de AR personalizado */
+    /* Botón AR personalizado */
     #ar-button {
       background-color: #0066cc;
       color: white;
       border: none;
       border-radius: 24px;
-      padding: 12px 24px;
+      padding: 14px 28px;
       font-size: 16px;
       font-weight: bold;
       cursor: pointer;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      box-shadow: 0 4px 12px rgba(0,102,204,0.4);
       position: absolute;
-      bottom: 20px;
+      bottom: 30px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 100;
@@ -50,12 +49,11 @@
       background-color: #0052a3;
     }
 
-    #ar-button:disabled {
-      background-color: #555;
-      cursor: not-allowed;
+    #ar-button:active {
+      transform: translateX(-50%) scale(0.98);
     }
 
-    /* Logo info */
+    /* Info top */
     #info {
       position: absolute;
       top: 20px;
@@ -68,22 +66,27 @@
       z-index: 10;
     }
 
-    /* Loading */
-    .progress-bar {
+    /* Mensaje de no AR */
+    #ar-not-available {
+      background: rgba(255,140,0,0.9);
+      color: white;
+      border-radius: 24px;
+      padding: 14px 28px;
+      font-size: 14px;
       position: absolute;
-      top: 50%;
+      bottom: 30px;
       left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(0,0,0,0.7);
-      padding: 20px 40px;
-      border-radius: 8px;
+      transform: translateX(-50%);
+      z-index: 100;
+      display: none;
       text-align: center;
+      max-width: 80%;
     }
   </style>
 </head>
 <body>
 
-  <div id="info">📱 Tu modelo 3D en AR</div>
+  <div id="info">📱 Modelo 3D</div>
 
   <model-viewer
     id="viewer"
@@ -106,27 +109,48 @@
     <button slot="ar-button" id="ar-button">
       👁️ Ver en AR
     </button>
-
-    <!-- Mensaje de carga -->
-    <div slot="progress-bar" class="progress-bar">
-      Cargando modelo...
-    </div>
   </model-viewer>
+
+  <!-- Mensaje cuando AR no está disponible -->
+  <div id="ar-not-available">
+    ⚠️ AR no disponible en este dispositivo<br>
+    <small>Usa Android con Chrome, o iPhone con Safari</small>
+  </div>
 
   <script>
     const viewer = document.getElementById('viewer');
+    const arButton = document.getElementById('ar-button');
+    const arNotAvailable = document.getElementById('ar-not-available');
     
     viewer.addEventListener('load', () => {
-      console.log('✅ Modelo cargado');
+      console.log('✅ Modelo cargado correctamente');
     });
 
     viewer.addEventListener('error', (e) => {
-      console.error('❌ Error:', e);
+      console.error('❌ Error cargando modelo:', e.detail);
     });
 
+    // Verificar si AR está disponible
     viewer.addEventListener('ar-status', (event) => {
-      console.log('AR status:', event.detail.status);
+      console.log('🔍 AR status:', event.detail.status);
+      
+      if (event.detail.status === 'not-presenting') {
+        // Estado normal, no hacer nada
+      } else if (event.detail.status === 'failed') {
+        console.error('❌ AR falló');
+      }
     });
+
+    // Verificar capacidad de AR después de un momento
+    setTimeout(() => {
+      if (!viewer.canActivateAR) {
+        console.warn('⚠️ AR no disponible en este dispositivo');
+        arButton.style.display = 'none';
+        arNotAvailable.style.display = 'block';
+      } else {
+        console.log('✅ AR disponible');
+      }
+    }, 2000);
   </script>
 
 </body>
